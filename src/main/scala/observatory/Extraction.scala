@@ -23,31 +23,44 @@ object Extraction {
   }
 
   /** @return The filesystem path of the given resource */
-  def fsPath(resource: String): String =
-    Paths.get(getClass.getResource(resource).toURI).toString
+  def fsPath(resource: String): String = {
+    val rootPath = "/Users/chosia/scala-spark-workshop/observatory/src/main/resources/"
+    rootPath + resource
+  }
 
   def locateTemperaturesDF(year: Year, stationsFile: String, temperaturesFile: String): DataFrame = {
     val stationsRDD = spark.sparkContext.textFile(fsPath(stationsFile))
     val tempRDD = spark.sparkContext.textFile(fsPath(temperaturesFile))
 
+    stationsRDD.map(_.split(",", -1).to[List])
+      .collect.take(10).foreach(l => println(l.mkString))
+    stationsRDD.collect.take(10).foreach(println)
+
     val stationsData =
       stationsRDD
-        .map(_.split(",").to[List])
+        .map(_.split(",", -1).to[List])
         .map(stationsRow)
 
     val tempData =
       tempRDD
-        .map(_.split(",").to[List])
+        .map(_.split(",", -1).to[List])
           .map(tempRow)
     val stationsDataFrame = spark.createDataFrame(stationsData, createStationsSchema)
     val tempDataFrame = spark.createDataFrame(tempData, createTempSchema)
+    stationsDataFrame.show()
+    tempDataFrame.show()
+    stationsDataFrame
   }
 
+  def toIntOrNull(s: String) : Any = if (s.isEmpty) null else s.toInt
+
+  def toDoubleOrNull(s: String) : Any = if (s.isEmpty) null else s.toDouble
+
   def stationsRow(fields: List[String]) : Row =
-    Row.fromTuple((fields(0).toInt, fields(1).toInt, fields(2).toDouble, fields(3).toDouble))
+    Row.fromTuple((toIntOrNull(fields(0)), toIntOrNull(fields(1)), toDoubleOrNull(fields(2)), toDoubleOrNull(fields(3))))
 
   def tempRow(fields: List[String]) : Row =
-    Row.fromTuple(fields(0).toInt, fields(1).toInt, fields(2).toInt, fields(3).toInt, fields(4).toDouble)
+    Row.fromTuple((toIntOrNull(fields(0)), toIntOrNull(fields(1)), toIntOrNull(fields(2)), toIntOrNull(fields(3)), toDoubleOrNull(fields(4))))
 
   def createStationsSchema : StructType = {
     StructType(List(
