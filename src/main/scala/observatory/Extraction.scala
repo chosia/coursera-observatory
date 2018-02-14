@@ -1,10 +1,10 @@
 package observatory
 
-import java.nio.file.Paths
 import java.time.LocalDate
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.functions._
 
 /**
   * 1st milestone: data extraction
@@ -19,7 +19,11 @@ object Extraction {
     * @return A sequence containing triplets (date, location, temperature)
     */
   def locateTemperatures(year: Year, stationsFile: String, temperaturesFile: String): Iterable[(LocalDate, Location, Temperature)] = {
-    ???
+    val df = locateTemperaturesDF(year, stationsFile, temperaturesFile)
+    df.collect.toList.map {
+      row => (LocalDate.of(row(0).asInstanceOf[Int], row(1).asInstanceOf[Int], row(2).asInstanceOf[Int]),
+        new Location(row(3).asInstanceOf[Double], row(4).asInstanceOf[Double]), row(5).asInstanceOf[Temperature])
+    }
   }
 
   /** @return The filesystem path of the given resource */
@@ -32,10 +36,6 @@ object Extraction {
     val stationsRDD = spark.sparkContext.textFile(fsPath(stationsFile))
     val tempRDD = spark.sparkContext.textFile(fsPath(temperaturesFile))
 
-    stationsRDD.map(_.split(",", -1).to[List])
-      .collect.take(10).foreach(l => println(l.mkString))
-    stationsRDD.collect.take(10).foreach(println)
-
     val stationsData =
       stationsRDD
         .map(_.split(",", -1).to[List])
@@ -46,10 +46,17 @@ object Extraction {
         .map(_.split(",", -1).to[List])
           .map(tempRow)
     val stationsDataFrame = spark.createDataFrame(stationsData, createStationsSchema)
-    val tempDataFrame = spark.createDataFrame(tempData, createTempSchema)
+    val tempDataFrame = spark.createDataFrame(tempData, createTempSchema).withColumn("year", lit(year))
     stationsDataFrame.show()
-    tempDataFrame.show()
-    stationsDataFrame
+    tempDataFrame.filter("STN == 20580").show()
+
+    val joinedDF = tempDataFrame
+      .join(stationsDataFrame,
+      tempDataFrame("STN") <=> stationsDataFrame("STN") &&
+        tempDataFrame("WBAN") <=> stationsDataFrame("WBAN"))
+        .select("year", "month", "day", "lat", "lon", "temp")
+    joinedDF.show()
+    joinedDF
   }
 
   def toIntOrNull(s: String) : Any = if (s.isEmpty) null else s.toInt
