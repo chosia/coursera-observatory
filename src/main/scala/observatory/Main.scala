@@ -1,6 +1,6 @@
 package observatory
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql._
 import observatory.Extraction._
 
 object Main extends App {
@@ -12,6 +12,20 @@ object Main extends App {
       .getOrCreate()
   spark.sparkContext.setLogLevel("ERROR")
 
-  locateTemperaturesDF(1975, "stations.csv", "1975.csv")
+  /*
+  var df = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], Extraction.createLocatedTempSchema)
+  for (year <- 1975 to 2015) {
+    val newDf = locateTemperaturesDF(year, "stations.csv", year.toString + ".csv")
+    df = df.union(newDf)
+  }
+  val avgDf = locationYearlyAverageRecordsDf(df)
+  avgDf.explain()
+  val cnt = avgDf.count()
+  println(s"AvgDf has $cnt rows")
+  avgDf.show()
+  */
+  val temps = locateTemperatures(1975, "stations.csv", "1975.csv")
+  val avgTemps = locationYearlyAverageRecords(temps)
+  println(avgTemps.mkString(",\n"))
 
 }

@@ -2,6 +2,7 @@ package observatory
 
 import java.time.LocalDate
 
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
@@ -10,7 +11,13 @@ import org.apache.spark.sql.functions._
   * 1st milestone: data extraction
   */
 object Extraction {
-  val spark = SparkSession.builder().getOrCreate()
+  //val spark = SparkSession.builder().getOrCreate()
+  val spark: SparkSession =
+    SparkSession
+      .builder()
+      .appName("Observatory")
+      .config("spark.master", "local")
+      .getOrCreate()
 
   /**
     * @param year             Year number
@@ -46,28 +53,29 @@ object Extraction {
         .map(_.split(",", -1).to[List])
           .map(tempRow)
     val stationsDataFrame = spark.createDataFrame(stationsData, createStationsSchema)
+      .where("lat is not null and lon is not null")
     val tempDataFrame = spark.createDataFrame(tempData, createTempSchema).withColumn("year", lit(year))
-    stationsDataFrame.show()
-    tempDataFrame.filter("STN == 20580").show()
 
     val joinedDF = tempDataFrame
       .join(stationsDataFrame,
       tempDataFrame("STN") <=> stationsDataFrame("STN") &&
         tempDataFrame("WBAN") <=> stationsDataFrame("WBAN"))
-        .select("year", "month", "day", "lat", "lon", "temp")
-    joinedDF.show()
+        .selectExpr("year", "month", "day", "lat", "lon", "(temp - 32)*(5/9)")
     joinedDF
   }
 
-  def toIntOrNull(s: String) : Any = if (s.isEmpty) null else s.toInt
+  def toIntOrNull(s: String) : Any = if (s.trim.isEmpty) null else s.trim.toInt
 
-  def toDoubleOrNull(s: String) : Any = if (s.isEmpty) null else s.toDouble
+  def toDoubleOrNull(s: String) : Any = if (s.trim.isEmpty) null else s.trim.toDouble
+
+  def toCelsiusOrNull(s: String) : Any = if (s.trim.isEmpty) null else (s.trim.toDouble - 32)*(5.0/9.0)
 
   def stationsRow(fields: List[String]) : Row =
     Row.fromTuple((toIntOrNull(fields(0)), toIntOrNull(fields(1)), toDoubleOrNull(fields(2)), toDoubleOrNull(fields(3))))
 
   def tempRow(fields: List[String]) : Row =
-    Row.fromTuple((toIntOrNull(fields(0)), toIntOrNull(fields(1)), toIntOrNull(fields(2)), toIntOrNull(fields(3)), toDoubleOrNull(fields(4))))
+    Row.fromTuple((toIntOrNull(fields(0)), toIntOrNull(fields(1)), toIntOrNull(fields(2)),
+      toIntOrNull(fields(3)), toDoubleOrNull(fields(4))))
 
   def createStationsSchema : StructType = {
     StructType(List(
@@ -87,13 +95,41 @@ object Extraction {
       StructField("temp", DoubleType, nullable = true)
     ))
 
+  def createLocatedTempSchema : StructType =
+    StructType(
+      StructField("year", IntegerType, nullable = false) ::
+      StructField("month", IntegerType, nullable = false) ::
+      StructField("day", IntegerType, nullable = false) ::
+      StructField("lat", DoubleType, nullable = false) ::
+      StructField("lon", DoubleType, nullable = false) ::
+      StructField("temp", DoubleType, nullable = false) ::
+      Nil
+    )
+
 
   /**
     * @param records A sequence containing triplets (date, location, temperature)
     * @return A sequence containing, for each location, the average temperature over the year.
     */
   def locationYearlyAverageRecords(records: Iterable[(LocalDate, Location, Temperature)]): Iterable[(Location, Temperature)] = {
-    ???
+    val rdd = spark.sparkContext.parallelize(records.toList)
+      .map(r => Row(r._1.getYear, r._1.getMonthValue, r._1.getDayOfMonth, r._2.lat, r._2.lon, r._3))
+    val schema: StructType = createLocatedTempSchema
+    val df = spark.createDataFrame(rdd, schema)
+    val avgDf = locationYearlyAverageRecordsDf(df)
+    avgDf.collect.toList.map {
+      row => (new Location(row(1).asInstanceOf[Double], row(2).asInstanceOf[Double]), row(3).asInstanceOf[Temperature])
+    }
+  }
+
+  def locationYearlyAverageRecordsDf(df: DataFrame): DataFrame = {
+    df.createOrReplaceTempView("located_temps")
+    spark.sql(
+      """
+        select year, lat, lon, avg(temp)
+        from located_temps
+        group by year, lat, lon
+      """.stripMargin)
   }
 
 }
